@@ -33,21 +33,22 @@
    :purple {:trail "200, 110, 255" :stops ["#ecc8ff" "#a040e0" "#3a0a4a"]}})
 
 (def ball-kinds
-  {:basic   {:palette :green  :radius 72 :hp 1 :speed 5 :bounce-gain 1.08}
-   :fast    {:palette :red    :radius 52 :hp 1 :speed 9 :bounce-gain 1.05}
-   :armored {:palette :grey   :radius 80 :hp 2 :speed 3 :bounce-gain 1.02}
-   :homing  {:palette :purple :radius 60 :hp 1 :speed 4 :bounce-gain 1.06
-             :homing 0.18}})
+  {:basic   {:palette :green  :radius 72 :hp 1 :speed 5 :bounce-gain 1.03 :max-speed 13}
+   :fast    {:palette :red    :radius 52 :hp 1 :speed 8 :bounce-gain 1.02 :max-speed 16}
+   :armored {:palette :grey   :radius 80 :hp 2 :speed 3 :bounce-gain 1.01 :max-speed 9}
+   :homing  {:palette :purple :radius 60 :hp 1 :speed 4 :bounce-gain 1.02 :max-speed 11
+             :homing 0.10}})
 
 (def powerup-kinds
   {:life      {:color "#ff5a8a" :glyph "♥"}
    :multishot {:color "#7fd0ff" :glyph "✦"}})
 
 (defn ball [kind x y dir]
-  (let [{:keys [palette radius hp speed bounce-gain homing]} (ball-kinds kind)]
+  (let [{:keys [palette radius hp speed bounce-gain max-speed homing]} (ball-kinds kind)]
     {:kind kind :palette palette
      :radius radius :hp hp :max-hp hp
-     :bounce-gain bounce-gain :homing (or homing 0)
+     :bounce-gain bounce-gain :max-speed max-speed
+     :homing (or homing 0)
      :x x :y y :vx (* dir speed) :vy 0 :trail '()}))
 
 (defn fresh-player [w h]
@@ -95,7 +96,13 @@
         [0 0]
         [(* (/ dx len) homing) (* (/ dy len) homing)]))))
 
-(defn step-ball [w h player {:keys [x y vx vy trail radius bounce-gain] :as b}]
+(defn clamp-speed [vx vy max-speed]
+  (let [sp (Math/sqrt (+ (* vx vx) (* vy vy)))]
+    (if (> sp max-speed)
+      (let [k (/ max-speed sp)] [(* vx k) (* vy k)])
+      [vx vy])))
+
+(defn step-ball [w h player {:keys [x y vx vy trail radius bounce-gain max-speed] :as b}]
   (let [[hx hy] (homing-accel b player)
         vx0 (+ vx hx)
         vy0 (+ vy hy gravity)
@@ -105,14 +112,15 @@
         ceil  radius
         right (- w radius)
         left  radius
-        [x** vx**] (cond
-                     (> x* right) [right (* (- vx0) wall-damping)]
-                     (< x* left)  [left  (* (- vx0) wall-damping)]
-                     :else        [x* vx0])
-        [y** vy**] (cond
-                     (>= y* floor) [floor (* (- vy0) bounce-gain)]
-                     (<= y* ceil)  [ceil  (* (- vy0) wall-damping)]
-                     :else         [y* vy0])
+        [x** vxw] (cond
+                    (> x* right) [right (* (- vx0) wall-damping)]
+                    (< x* left)  [left  (* (- vx0) wall-damping)]
+                    :else        [x* vx0])
+        [y** vyw] (cond
+                    (>= y* floor) [floor (* (- vy0) bounce-gain)]
+                    (<= y* ceil)  [ceil  (* (- vy0) wall-damping)]
+                    :else         [y* vy0])
+        [vx** vy**] (clamp-speed vxw vyw max-speed)
         trail* (take max-trail (conj trail [x** y**]))]
     (assoc b :x x** :y y** :vx vx** :vy vy** :trail trail*)))
 
