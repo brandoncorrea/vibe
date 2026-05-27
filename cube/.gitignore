@@ -5,3 +5,5 @@ public/js/
 out/
 *.log
 .idea
+.clj-kondo
+.lsp
