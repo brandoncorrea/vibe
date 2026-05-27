@@ -21,7 +21,6 @@
 (def ^:const cam-distance 6)
 (def ^:const focal 520)
 
-(def ^:const light-pos [2.2 2.4 3.0])
 (def ^:const light-color [1.00 0.55 0.22])  ; warm orange
 (def ^:const ambient     [0.08 0.10 0.18])  ; cool dim base
 (def ^:const base-face   [0.92 0.92 0.94])  ; near-white so the light reads pure
@@ -68,7 +67,7 @@
 
 (defn shade
   "Lambert shading from a single colored point light + ambient."
-  [normal face-center]
+  [light-pos normal face-center]
   (let [ldir (vnorm (v- light-pos face-center))
         diff (max 0 (vdot normal ldir))
         [lr lg lb] light-color
@@ -85,7 +84,10 @@
 
 ;; --- state ------------------------------------------------------------------
 
-(defonce state (atom {:rx 25 :ry 35 :rz 0 :w 800 :h 600}))
+(defonce state
+  (atom {:rx 25 :ry 35 :rz 0
+         :lx 2.2 :ly 2.4 :lz 3.0
+         :w 800 :h 600}))
 
 (defn resize! [canvas]
   (let [w (.-innerWidth js/window)
@@ -104,25 +106,30 @@
         cz (/ (reduce + (map #(nth % 2) verts)) 4)]
     {:verts verts :normal n :center [cx cy cz]}))
 
-(defn draw-light-glow! [ctx w h]
-  (let [[lx ly] (project w h light-pos)
-        grad (.createRadialGradient ctx lx ly 0 lx ly 220)
+(defn draw-light-glow! [ctx w h light-pos]
+  ;; Skip the glow when the light is at/behind the camera (depth ≤ 0); the
+  ;; projection would blow up and paint the whole canvas.
+  (let [[lx ly depth] (project w h light-pos)
+        in-front? (> depth 0.2)
+        radius (when in-front? (max 60 (/ 1100 depth)))
         [r g b] light-color]
-    (.addColorStop grad 0 (str "rgba(" (Math/round (* 255 r)) ","
-                                       (Math/round (* 255 g)) ","
-                                       (Math/round (* 255 b)) ",0.55)"))
-    (.addColorStop grad 1 (str "rgba(" (Math/round (* 255 r)) ","
-                                       (Math/round (* 255 g)) ","
-                                       (Math/round (* 255 b)) ",0)"))
-    (set! (.-fillStyle ctx) grad)
-    (.fillRect ctx 0 0 w h)
-    (set! (.-fillStyle ctx) "#fff2d6")
-    (.beginPath ctx)
-    (.arc ctx lx ly 5 0 (* 2 Math/PI))
-    (.fill ctx)))
+    (when in-front?
+      (let [grad (.createRadialGradient ctx lx ly 0 lx ly radius)]
+        (.addColorStop grad 0 (str "rgba(" (Math/round (* 255 r)) ","
+                                          (Math/round (* 255 g)) ","
+                                          (Math/round (* 255 b)) ",0.55)"))
+        (.addColorStop grad 1 (str "rgba(" (Math/round (* 255 r)) ","
+                                          (Math/round (* 255 g)) ","
+                                          (Math/round (* 255 b)) ",0)"))
+        (set! (.-fillStyle ctx) grad)
+        (.fillRect ctx 0 0 w h)
+        (set! (.-fillStyle ctx) "#fff2d6")
+        (.beginPath ctx)
+        (.arc ctx lx ly (max 3 (/ 22 depth)) 0 (* 2 Math/PI))
+        (.fill ctx)))))
 
-(defn draw-face! [ctx w h {:keys [verts] :as f}]
-  (let [color (shade (:normal f) (:center f))
+(defn draw-face! [ctx w h light-pos {:keys [verts] :as f}]
+  (let [color (shade light-pos (:normal f) (:center f))
         pts (mapv #(project w h %) verts)]
     (set! (.-fillStyle ctx) (rgb->css color))
     (set! (.-strokeStyle ctx) "rgba(0,0,0,0.45)")
@@ -136,22 +143,23 @@
     (.fill ctx)
     (.stroke ctx)))
 
-(defn render! [ctx {:keys [rx ry rz w h]}]
-  (set! (.-fillStyle ctx) "#0a0d12")
-  (.fillRect ctx 0 0 w h)
-  (draw-light-glow! ctx w h)
-  (let [deg->rad (/ Math/PI 180)
-        rxr (* rx deg->rad)
-        ryr (* ry deg->rad)
-        rzr (* rz deg->rad)
-        faces (->> cube-faces
-                   (map #(face-render-data rxr ryr rzr %))
-                   ;; back-face cull: only normals pointing toward camera (+Z)
-                   (filter #(pos? (nth (:normal %) 2)))
-                   ;; painter's: far center-z first
-                   (sort-by #(nth (:center %) 2)))]
-    (doseq [f faces]
-      (draw-face! ctx w h f))))
+(defn render! [ctx {:keys [rx ry rz lx ly lz w h]}]
+  (let [light-pos [lx ly lz]]
+    (set! (.-fillStyle ctx) "#0a0d12")
+    (.fillRect ctx 0 0 w h)
+    (draw-light-glow! ctx w h light-pos)
+    (let [deg->rad (/ Math/PI 180)
+          rxr (* rx deg->rad)
+          ryr (* ry deg->rad)
+          rzr (* rz deg->rad)
+          faces (->> cube-faces
+                     (map #(face-render-data rxr ryr rzr %))
+                     ;; back-face cull: only normals pointing toward camera (+Z)
+                     (filter #(pos? (nth (:normal %) 2)))
+                     ;; painter's: far center-z first
+                     (sort-by #(nth (:center %) 2)))]
+      (doseq [f faces]
+        (draw-face! ctx w h light-pos f)))))
 
 (defn frame [ctx]
   (render! ctx @state)
@@ -159,7 +167,7 @@
 
 ;; --- UI wiring --------------------------------------------------------------
 
-(defn bind-slider! [id k]
+(defn bind-slider! [id k fmt]
   (let [el  (.getElementById js/document id)
         out (.getElementById js/document (str id "-out"))]
     (when el
@@ -167,15 +175,21 @@
        el "input"
        (fn [e]
          (let [v (js/parseFloat (.. e -target -value))]
-           (set! (.-textContent out) (str v "°"))
+           (set! (.-textContent out) (fmt v))
            (swap! state assoc k v)))))))
+
+(defn fmt-deg [v] (str v "°"))
+(defn fmt-pos [v] (.toFixed v 1))
 
 (defn init []
   (let [canvas (.getElementById js/document "stage")
         ctx (.getContext canvas "2d")]
     (resize! canvas)
     (.addEventListener js/window "resize" #(resize! canvas))
-    (bind-slider! "rotX" :rx)
-    (bind-slider! "rotY" :ry)
-    (bind-slider! "rotZ" :rz)
+    (bind-slider! "rotX"   :rx fmt-deg)
+    (bind-slider! "rotY"   :ry fmt-deg)
+    (bind-slider! "rotZ"   :rz fmt-deg)
+    (bind-slider! "lightX" :lx fmt-pos)
+    (bind-slider! "lightY" :ly fmt-pos)
+    (bind-slider! "lightZ" :lz fmt-pos)
     (js/requestAnimationFrame #(frame ctx))))

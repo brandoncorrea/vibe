@@ -19,6 +19,7 @@
       #controls h1 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
                      letter-spacing: 0.08em; text-transform: uppercase;
                      color: #a8b0c0; }
+      #controls h1 + h1 { margin-top: 14px; }
       .row { display: grid; grid-template-columns: 28px 1fr 56px;
              align-items: center; gap: 10px; margin: 6px 0; font-size: 13px; }
       .row label { color: #c8cdd8; font-weight: 600; }
@@ -45,6 +46,22 @@
         <label for="rotZ">Z</label>
         <input id="rotZ" type="range" min="0" max="360" step="1" value="0" />
         <output id="rotZ-out">0°</output>
+      </div>
+      <h1>Light</h1>
+      <div class="row">
+        <label for="lightX">X</label>
+        <input id="lightX" type="range" min="-5" max="5" step="0.1" value="2.2" />
+        <output id="lightX-out">2.2</output>
+      </div>
+      <div class="row">
+        <label for="lightY">Y</label>
+        <input id="lightY" type="range" min="-5" max="5" step="0.1" value="2.4" />
+        <output id="lightY-out">2.4</output>
+      </div>
+      <div class="row">
+        <label for="lightZ">Z</label>
+        <input id="lightZ" type="range" min="-3" max="5" step="0.1" value="3.0" />
+        <output id="lightZ-out">3.0</output>
       </div>
     </div>
     <script src="/js/main.js"></script>
