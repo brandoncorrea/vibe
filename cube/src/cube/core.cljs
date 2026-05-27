@@ -18,8 +18,12 @@
 
 ;; --- camera & lighting ------------------------------------------------------
 
-(def ^:const cam-distance 6)
 (def ^:const focal 520)
+
+(def ^:const drag-sens 0.5)    ; degrees per pixel
+(def ^:const zoom-sens 0.005)  ; cam units per wheel-delta unit
+(def ^:const min-cam 2.5)
+(def ^:const max-cam 20)
 
 (def ^:const light-color [1.00 0.55 0.22])  ; warm orange
 (def ^:const ambient     [0.08 0.10 0.18])  ; cool dim base
@@ -54,10 +58,9 @@
 
 (defn project
   "World point -> [screen-x screen-y depth-from-camera]. Camera sits at
-   [0 0 cam-distance] looking toward -Z, so smaller depth = closer."
-  [w h [x y z]]
-  (let [depth (- cam-distance z)
-        depth (max 0.01 depth)
+   [0 0 cam] looking toward -Z, so smaller depth = closer."
+  [w h cam [x y z]]
+  (let [depth (max 0.01 (- cam z))
         s (/ focal depth)]
     [(+ (/ w 2) (* x s))
      (- (/ h 2) (* y s))   ; flip Y for canvas
@@ -87,6 +90,8 @@
 (defonce state
   (atom {:rx 25 :ry 35 :rz 0
          :lx 2.2 :ly 2.4 :lz 3.0
+         :cam 6
+         :drag nil
          :w 800 :h 600}))
 
 (defn resize! [canvas]
@@ -106,10 +111,10 @@
         cz (/ (reduce + (map #(nth % 2) verts)) 4)]
     {:verts verts :normal n :center [cx cy cz]}))
 
-(defn draw-light-glow! [ctx w h light-pos]
+(defn draw-light-glow! [ctx w h cam light-pos]
   ;; Skip the glow when the light is at/behind the camera (depth ≤ 0); the
   ;; projection would blow up and paint the whole canvas.
-  (let [[lx ly depth] (project w h light-pos)
+  (let [[lx ly depth] (project w h cam light-pos)
         in-front? (> depth 0.2)
         radius (when in-front? (max 60 (/ 1100 depth)))
         [r g b] light-color]
@@ -128,9 +133,9 @@
         (.arc ctx lx ly (max 3 (/ 22 depth)) 0 (* 2 Math/PI))
         (.fill ctx)))))
 
-(defn draw-face! [ctx w h light-pos {:keys [verts] :as f}]
+(defn draw-face! [ctx w h cam light-pos {:keys [verts] :as f}]
   (let [color (shade light-pos (:normal f) (:center f))
-        pts (mapv #(project w h %) verts)]
+        pts (mapv #(project w h cam %) verts)]
     (set! (.-fillStyle ctx) (rgb->css color))
     (set! (.-strokeStyle ctx) "rgba(0,0,0,0.45)")
     (set! (.-lineWidth ctx) 1)
@@ -143,11 +148,11 @@
     (.fill ctx)
     (.stroke ctx)))
 
-(defn render! [ctx {:keys [rx ry rz lx ly lz w h]}]
+(defn render! [ctx {:keys [rx ry rz lx ly lz cam w h]}]
   (let [light-pos [lx ly lz]]
     (set! (.-fillStyle ctx) "#0a0d12")
     (.fillRect ctx 0 0 w h)
-    (draw-light-glow! ctx w h light-pos)
+    (draw-light-glow! ctx w h cam light-pos)
     (let [deg->rad (/ Math/PI 180)
           rxr (* rx deg->rad)
           ryr (* ry deg->rad)
@@ -159,7 +164,7 @@
                      ;; painter's: far center-z first
                      (sort-by #(nth (:center %) 2)))]
       (doseq [f faces]
-        (draw-face! ctx w h light-pos f)))))
+        (draw-face! ctx w h cam light-pos f)))))
 
 (defn frame [ctx]
   (render! ctx @state)
@@ -181,6 +186,43 @@
 (defn fmt-deg [v] (str v "°"))
 (defn fmt-pos [v] (.toFixed v 1))
 
+(defn sync-slider!
+  "Push a state-driven change back into the slider DOM (drag updates rotation
+   without going through the slider's input event, so we mirror it here)."
+  [id v fmt]
+  (when-let [el (.getElementById js/document id)]
+    (set! (.-value el) v))
+  (when-let [out (.getElementById js/document (str id "-out"))]
+    (set! (.-textContent out) (fmt v))))
+
+(defn on-mousedown [e]
+  (.preventDefault e)
+  (let [s @state]
+    (swap! state assoc :drag {:sx (.-clientX e) :sy (.-clientY e)
+                              :rx0 (:rx s) :ry0 (:ry s)})))
+
+(defn on-mousemove [e]
+  (when-let [d (:drag @state)]
+    (let [dx (- (.-clientX e) (:sx d))
+          dy (- (.-clientY e) (:sy d))
+          rx* (Math/round (mod (+ (:rx0 d) (* dy drag-sens)) 360))
+          ry* (Math/round (mod (+ (:ry0 d) (* dx drag-sens)) 360))]
+      (swap! state assoc :rx rx* :ry ry*)
+      (sync-slider! "rotX" rx* fmt-deg)
+      (sync-slider! "rotY" ry* fmt-deg))))
+
+(defn on-mouseup [_e]
+  (when (:drag @state)
+    (swap! state assoc :drag nil)))
+
+(defn on-wheel [e]
+  (.preventDefault e)
+  (let [dy (.-deltaY e)
+        cam* (-> (+ (:cam @state) (* dy zoom-sens))
+                 (max min-cam)
+                 (min max-cam))]
+    (swap! state assoc :cam cam*)))
+
 (defn init []
   (let [canvas (.getElementById js/document "stage")
         ctx (.getContext canvas "2d")]
@@ -192,4 +234,8 @@
     (bind-slider! "lightX" :lx fmt-pos)
     (bind-slider! "lightY" :ly fmt-pos)
     (bind-slider! "lightZ" :lz fmt-pos)
+    (.addEventListener canvas "mousedown" on-mousedown)
+    (.addEventListener js/window "mousemove" on-mousemove)
+    (.addEventListener js/window "mouseup"   on-mouseup)
+    (.addEventListener canvas "wheel" on-wheel #js {:passive false})
     (js/requestAnimationFrame #(frame ctx))))
