@@ -39,20 +39,78 @@
   (let [l (vlen v)]
     (if (zero? l) v (v* v (/ 1 l)))))
 
-(defn rot-x [a [x y z]]
-  (let [c (Math/cos a) s (Math/sin a)]
-    [x (- (* y c) (* z s)) (+ (* y s) (* z c))]))
+;; --- 3x3 rotation matrices --------------------------------------------------
+;; A matrix is [[r0c0 r0c1 r0c2] [r1c0 r1c1 r1c2] [r2c0 r2c1 r2c2]].
+;; This lets drag compose world-axis rotations directly onto an accumulated
+;; matrix instead of poking Euler angles, which would gimbal-lock once two
+;; axes are non-zero.
 
-(defn rot-y [a [x y z]]
-  (let [c (Math/cos a) s (Math/sin a)]
-    [(+ (* x c) (* z s)) y (- (* z c) (* x s))]))
+(def ^:const identity-mat [[1 0 0] [0 1 0] [0 0 1]])
 
-(defn rot-z [a [x y z]]
+(defn mat-rot-x [a]
   (let [c (Math/cos a) s (Math/sin a)]
-    [(- (* x c) (* y s)) (+ (* x s) (* y c)) z]))
+    [[1 0       0]
+     [0 c       (- s)]
+     [0 s       c]]))
 
-(defn rotate [rx ry rz v]
-  (->> v (rot-x rx) (rot-y ry) (rot-z rz)))
+(defn mat-rot-y [a]
+  (let [c (Math/cos a) s (Math/sin a)]
+    [[c        0 s]
+     [0        1 0]
+     [(- s)    0 c]]))
+
+(defn mat-rot-z [a]
+  (let [c (Math/cos a) s (Math/sin a)]
+    [[c (- s) 0]
+     [s c     0]
+     [0 0     1]]))
+
+(defn mat-mul [a b]
+  (let [[[a00 a01 a02] [a10 a11 a12] [a20 a21 a22]] a
+        [[b00 b01 b02] [b10 b11 b12] [b20 b21 b22]] b]
+    [[(+ (* a00 b00) (* a01 b10) (* a02 b20))
+      (+ (* a00 b01) (* a01 b11) (* a02 b21))
+      (+ (* a00 b02) (* a01 b12) (* a02 b22))]
+     [(+ (* a10 b00) (* a11 b10) (* a12 b20))
+      (+ (* a10 b01) (* a11 b11) (* a12 b21))
+      (+ (* a10 b02) (* a11 b12) (* a12 b22))]
+     [(+ (* a20 b00) (* a21 b10) (* a22 b20))
+      (+ (* a20 b01) (* a21 b11) (* a22 b21))
+      (+ (* a20 b02) (* a21 b12) (* a22 b22))]]))
+
+(defn mat-apply
+  [[[m00 m01 m02] [m10 m11 m12] [m20 m21 m22]] [x y z]]
+  [(+ (* m00 x) (* m01 y) (* m02 z))
+   (+ (* m10 x) (* m11 y) (* m12 z))
+   (+ (* m20 x) (* m21 y) (* m22 z))])
+
+(def ^:const deg->rad (/ Math/PI 180))
+(def ^:const rad->deg (/ 180 Math/PI))
+
+(defn euler->mat
+  "Slider Euler triple -> rotation matrix, in the same convention the older
+   render used: M = Rz(rz) * Ry(ry) * Rx(rx)."
+  [rx-deg ry-deg rz-deg]
+  (mat-mul (mat-rot-z (* rz-deg deg->rad))
+           (mat-mul (mat-rot-y (* ry-deg deg->rad))
+                    (mat-rot-x (* rx-deg deg->rad)))))
+
+(defn mat->euler
+  "Inverse of euler->mat: pull a Z-Y-X Euler triple (degrees) out of a
+   rotation matrix so the sliders can mirror drag state."
+  [[[m00 _ _] [m10 m11 m12] [m20 m21 m22]]]
+  (let [sy (- m20)
+        cy (Math/sqrt (+ (* m21 m21) (* m22 m22)))]
+    (if (< cy 1.0e-6)
+      ;; Gimbal lock at ry = ±90°: collapse rz into rx.
+      [(* rad->deg (Math/atan2 (- m12) m11))
+       (* rad->deg (Math/asin (max -1.0 (min 1.0 sy))))
+       0]
+      [(* rad->deg (Math/atan2 m21 m22))
+       (* rad->deg (Math/atan2 sy cy))
+       (* rad->deg (Math/atan2 m10 m00))])))
+
+(defn deg-mod [x] (mod (Math/round x) 360))
 
 ;; --- projection -------------------------------------------------------------
 
@@ -88,11 +146,13 @@
 ;; --- state ------------------------------------------------------------------
 
 (defonce state
-  (atom {:rx 25 :ry 35 :rz 0
-         :lx 2.2 :ly 2.4 :lz 3.0
-         :cam 6
-         :drag nil
-         :w 800 :h 600}))
+  (atom (let [rx 25 ry 35 rz 0]
+          {:rx rx :ry ry :rz rz
+           :rmat (euler->mat rx ry rz)
+           :lx 2.2 :ly 2.4 :lz 3.0
+           :cam 6
+           :drag nil
+           :w 800 :h 600})))
 
 (defn resize! [canvas]
   (let [w (.-innerWidth js/window)
@@ -103,9 +163,9 @@
 
 ;; --- rendering --------------------------------------------------------------
 
-(defn face-render-data [rx ry rz {:keys [idx normal]}]
-  (let [verts (mapv (fn [i] (rotate rx ry rz (nth cube-vertices i))) idx)
-        n     (rotate rx ry rz normal)
+(defn face-render-data [rmat {:keys [idx normal]}]
+  (let [verts (mapv (fn [i] (mat-apply rmat (nth cube-vertices i))) idx)
+        n     (mat-apply rmat normal)
         cx (/ (reduce + (map first verts)) 4)
         cy (/ (reduce + (map second verts)) 4)
         cz (/ (reduce + (map #(nth % 2) verts)) 4)]
@@ -148,17 +208,13 @@
     (.fill ctx)
     (.stroke ctx)))
 
-(defn render! [ctx {:keys [rx ry rz lx ly lz cam w h]}]
+(defn render! [ctx {:keys [rmat lx ly lz cam w h]}]
   (let [light-pos [lx ly lz]]
     (set! (.-fillStyle ctx) "#0a0d12")
     (.fillRect ctx 0 0 w h)
     (draw-light-glow! ctx w h cam light-pos)
-    (let [deg->rad (/ Math/PI 180)
-          rxr (* rx deg->rad)
-          ryr (* ry deg->rad)
-          rzr (* rz deg->rad)
-          faces (->> cube-faces
-                     (map #(face-render-data rxr ryr rzr %))
+    (let [faces (->> cube-faces
+                     (map #(face-render-data rmat %))
                      ;; back-face cull: only normals pointing toward camera (+Z)
                      (filter #(pos? (nth (:normal %) 2)))
                      ;; painter's: far center-z first
@@ -172,6 +228,19 @@
 
 ;; --- UI wiring --------------------------------------------------------------
 
+(defn fmt-deg [v] (str v "°"))
+(defn fmt-pos [v] (.toFixed v 1))
+
+(defn sync-slider!
+  "Push a state-driven change back into the slider DOM (drag and slider feed
+   the same atom, but programmatic .value changes don't fire 'input', so
+   there's no feedback loop)."
+  [id v fmt]
+  (when-let [el (.getElementById js/document id)]
+    (set! (.-value el) v))
+  (when-let [out (.getElementById js/document (str id "-out"))]
+    (set! (.-textContent out) (fmt v))))
+
 (defn bind-slider! [id k fmt]
   (let [el  (.getElementById js/document id)
         out (.getElementById js/document (str id "-out"))]
@@ -181,35 +250,37 @@
        (fn [e]
          (let [v (js/parseFloat (.. e -target -value))]
            (set! (.-textContent out) (fmt v))
-           (swap! state assoc k v)))))))
-
-(defn fmt-deg [v] (str v "°"))
-(defn fmt-pos [v] (.toFixed v 1))
-
-(defn sync-slider!
-  "Push a state-driven change back into the slider DOM (drag updates rotation
-   without going through the slider's input event, so we mirror it here)."
-  [id v fmt]
-  (when-let [el (.getElementById js/document id)]
-    (set! (.-value el) v))
-  (when-let [out (.getElementById js/document (str id "-out"))]
-    (set! (.-textContent out) (fmt v))))
+           (swap! state
+                  (fn [s]
+                    (let [s* (assoc s k v)]
+                      (if (#{:rx :ry :rz} k)
+                        (assoc s* :rmat (euler->mat (:rx s*) (:ry s*) (:rz s*)))
+                        s*))))))))))
 
 (defn on-mousedown [e]
   (.preventDefault e)
   (let [s @state]
     (swap! state assoc :drag {:sx (.-clientX e) :sy (.-clientY e)
-                              :rx0 (:rx s) :ry0 (:ry s)})))
+                              :rmat0 (:rmat s)})))
 
 (defn on-mousemove [e]
   (when-let [d (:drag @state)]
     (let [dx (- (.-clientX e) (:sx d))
           dy (- (.-clientY e) (:sy d))
-          rx* (Math/round (mod (+ (:rx0 d) (* dy drag-sens)) 360))
-          ry* (Math/round (mod (+ (:ry0 d) (* dx drag-sens)) 360))]
-      (swap! state assoc :rx rx* :ry ry*)
+          ;; Compose world-axis rotations onto the matrix snapshot taken at
+          ;; mousedown. Left-multiplying means dx/dy always rotate around the
+          ;; screen's Y/X axes regardless of current orientation — no gimbal.
+          rmat* (mat-mul (mat-rot-x (* dy drag-sens deg->rad))
+                         (mat-mul (mat-rot-y (* dx drag-sens deg->rad))
+                                  (:rmat0 d)))
+          [erx ery erz] (mat->euler rmat*)
+          rx* (deg-mod erx)
+          ry* (deg-mod ery)
+          rz* (deg-mod erz)]
+      (swap! state assoc :rmat rmat* :rx rx* :ry ry* :rz rz*)
       (sync-slider! "rotX" rx* fmt-deg)
-      (sync-slider! "rotY" ry* fmt-deg))))
+      (sync-slider! "rotY" ry* fmt-deg)
+      (sync-slider! "rotZ" rz* fmt-deg))))
 
 (defn on-mouseup [_e]
   (when (:drag @state)
