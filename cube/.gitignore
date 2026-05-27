@@ -2,5 +2,6 @@ node_modules/
 .shadow-cljs/
 public/js/
 .cpcache/
+out/
 *.log
 .idea

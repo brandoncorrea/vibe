@@ -14,6 +14,15 @@ npx shadow-cljs watch app
 
 Open <http://localhost:8080>.
 
+## Test
+
+```bash
+npm test
+```
+
+Runs the pure-function tests under `test/cube/core_test.cljs` via shadow-cljs'
+node-test target.
+
 ## Knobs
 
 In `src/cube/core.cljs`:
