@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Cube</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0a0d12; overflow: hidden;
+                   font-family: -apple-system, system-ui, sans-serif; color: #e8e8ee; }
+      canvas { display: block; width: 100vw; height: 100vh; }
+      #controls {
+        position: fixed; top: 16px; right: 16px;
+        padding: 14px 18px;
+        background: rgba(20, 24, 32, 0.78);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 10px;
+        backdrop-filter: blur(8px);
+        min-width: 220px;
+      }
+      #controls h1 { margin: 0 0 10px 0; font-size: 13px; font-weight: 600;
+                     letter-spacing: 0.08em; text-transform: uppercase;
+                     color: #a8b0c0; }
+      .row { display: grid; grid-template-columns: 28px 1fr 56px;
+             align-items: center; gap: 10px; margin: 6px 0; font-size: 13px; }
+      .row label { color: #c8cdd8; font-weight: 600; }
+      .row output { color: #ffb682; font-variant-numeric: tabular-nums;
+                    text-align: right; }
+      input[type=range] { width: 100%; accent-color: #ff9c5b; }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+    <div id="controls">
+      <h1>Orientation</h1>
+      <div class="row">
+        <label for="rotX">X</label>
+        <input id="rotX" type="range" min="0" max="360" step="1" value="25" />
+        <output id="rotX-out">25°</output>
+      </div>
+      <div class="row">
+        <label for="rotY">Y</label>
+        <input id="rotY" type="range" min="0" max="360" step="1" value="35" />
+        <output id="rotY-out">35°</output>
+      </div>
+      <div class="row">
+        <label for="rotZ">Z</label>
+        <input id="rotZ" type="range" min="0" max="360" step="1" value="0" />
+        <output id="rotZ-out">0°</output>
+      </div>
+    </div>
+    <script src="/js/main.js"></script>
+  </body>
+</html>
