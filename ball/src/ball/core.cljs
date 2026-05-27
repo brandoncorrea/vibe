@@ -19,9 +19,13 @@
   (js/requestAnimationFrame #(frame ctx)))
 
 (def key-map
-  {"ArrowLeft"  :left   "KeyA" :left
-   "ArrowRight" :right  "KeyD" :right
-   "ArrowUp"    :jump   "KeyW" :jump   "Space" :jump})
+  {"ArrowLeft"  :left
+   "ArrowRight" :right
+   "ArrowUp"    :jump
+   "KeyA"       :left
+   "KeyD"       :right
+   "KeyW"       :jump
+   "Space"      :jump})
 
 (defn on-keydown [e]
   (when-let [k (key-map (.-code e))]
@@ -52,7 +56,7 @@
 
 (defn init []
   (let [canvas (.getElementById js/document "stage")
-        ctx (.getContext canvas "2d")]
+        ctx    (.getContext canvas "2d")]
     (resize! canvas)
     (swap! app (fn [{:keys [w h]}] (state/fresh-state w h)))
     (.addEventListener js/window "resize" #(resize! canvas))

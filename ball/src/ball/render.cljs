@@ -1,7 +1,8 @@
 (ns ball.render
   "Canvas drawing."
   (:require [ball.config :as cfg]
-            [ball.game :as game]))
+            [ball.game :as game]
+            [clojure.math :as math]))
 
 (defn clear! [ctx w h]
   (set! (.-fillStyle ctx) "rgba(17, 17, 17, 0.25)")
@@ -17,7 +18,7 @@
           (set! (.-fillStyle ctx)
                 (str "rgba(" rgb ", " (* 0.55 alpha) ")"))
           (.beginPath ctx)
-          (.arc ctx tx ty r 0 (* 2 Math/PI))
+          (.arc ctx tx ty r 0 (* 2 math/PI))
           (.fill ctx))))))
 
 (defn draw-ball! [ctx {:keys [x y palette radius hp max-hp]}]
@@ -30,7 +31,7 @@
     (.addColorStop grad 1 c2)
     (set! (.-fillStyle ctx) grad)
     (.beginPath ctx)
-    (.arc ctx x y radius 0 (* 2 Math/PI))
+    (.arc ctx x y radius 0 (* 2 math/PI))
     (.fill ctx)
     (when (< hp max-hp)
       (set! (.-strokeStyle ctx) "rgba(0,0,0,0.55)")
@@ -56,8 +57,8 @@
       (let [eye-y (+ y 14)
             off (* 6 facing)]
         (.beginPath ctx)
-        (.arc ctx (+ cx off -4) eye-y 2.5 0 (* 2 Math/PI))
-        (.arc ctx (+ cx off  6) eye-y 2.5 0 (* 2 Math/PI))
+        (.arc ctx (+ cx off -4) eye-y 2.5 0 (* 2 math/PI))
+        (.arc ctx (+ cx off  6) eye-y 2.5 0 (* 2 math/PI))
         (.fill ctx)))))
 
 (defn draw-projectiles! [ctx projectiles]
@@ -66,7 +67,7 @@
   (set! (.-shadowBlur ctx) 12)
   (doseq [{:keys [x y]} projectiles]
     (.beginPath ctx)
-    (.arc ctx x y cfg/proj-radius 0 (* 2 Math/PI))
+    (.arc ctx x y cfg/proj-radius 0 (* 2 math/PI))
     (.fill ctx))
   (set! (.-shadowBlur ctx) 0))
 
@@ -109,7 +110,7 @@
         (.setLineDash ctx #js [])
         (set! (.-fillStyle ctx) "#fff")
         (.beginPath ctx)
-        (.arc ctx ex ey 4 0 (* 2 Math/PI))
+        (.arc ctx ex ey 4 0 (* 2 math/PI))
         (.fill ctx)))))
 
 (defn draw-hud! [ctx {:keys [lives pops score phase balls buffs w h]}]

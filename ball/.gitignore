@@ -4,3 +4,5 @@ public/js/
 .cpcache/
 *.log
 .idea
+.clj-kondo
+.lsp

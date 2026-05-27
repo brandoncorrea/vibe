@@ -3,7 +3,8 @@
   whatever ambient world data it needs) and returns the next entity, or
   nil if it should despawn."
   (:require [ball.config :as cfg]
-            [ball.math :as m]))
+            [ball.math :as m]
+            [clojure.math :as math]))
 
 (defn homing-accel [{bx :x by :y homing :homing} {px :x py :y}]
   (if (zero? homing)
@@ -11,7 +12,7 @@
     (let [pcx (+ px (/ cfg/player-w 2))
           pcy (+ py (/ cfg/player-h 2))
           dx (- pcx bx) dy (- pcy by)
-          len (Math/sqrt (+ (* dx dx) (* dy dy)))]
+          len (math/sqrt (+ (* dx dx) (* dy dy)))]
       (if (< len 1)
         [0 0]
         [(* (/ dx len) homing) (* (/ dy len) homing)]))))

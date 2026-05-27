@@ -1,18 +1,19 @@
 (ns ball.math
-  "Vector and geometry helpers.")
+  "Vector and geometry helpers."
+  (:require [clojure.math :as math]))
 
 (defn dist2 [ax ay bx by]
   (let [dx (- ax bx) dy (- ay by)]
     (+ (* dx dx) (* dy dy))))
 
 (defn clamp-speed [vx vy max-speed]
-  (let [sp (Math/sqrt (+ (* vx vx) (* vy vy)))]
+  (let [sp (math/sqrt (+ (* vx vx) (* vy vy)))]
     (if (> sp max-speed)
       (let [k (/ max-speed sp)] [(* vx k) (* vy k)])
       [vx vy])))
 
 (defn rotate [vx vy angle]
-  (let [c (Math/cos angle) s (Math/sin angle)]
+  (let [c (math/cos angle) s (math/sin angle)]
     [(- (* vx c) (* vy s))
      (+ (* vx s) (* vy c))]))
 
