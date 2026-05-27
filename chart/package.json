@@ -1,0 +1,17 @@
+{
+  "name": "photographs-chart",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "watch": "shadow-cljs watch chart",
+    "release": "shadow-cljs release chart",
+    "clean": "rm -rf public/js .shadow-cljs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "shadow-cljs": "^2.28.18"
+  }
+}
