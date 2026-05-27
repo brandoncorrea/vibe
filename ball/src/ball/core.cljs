@@ -10,12 +10,20 @@
 (def ^:const player-jump 15)
 (def ^:const player-gravity 0.8)
 (def ^:const invuln-frames 60)
+(def ^:const max-lives 5)
 
 (def ^:const proj-radius 6)
 (def ^:const proj-speed 22)
 (def ^:const max-drag 200)
 (def ^:const min-drag 12)
 (def ^:const fire-cooldown 8)
+
+(def ^:const powerup-size 28)
+(def ^:const powerup-gravity 0.35)
+(def ^:const powerup-ttl 480)
+(def ^:const drop-rate 0.35)
+(def ^:const multishot-frames 360)
+(def ^:const multishot-spread 0.26)
 
 (def palettes
   {:green  {:trail "80, 220, 100"  :stops ["#c8ffc8" "#40c040" "#0a4a0a"]}
@@ -31,9 +39,11 @@
    :homing  {:palette :purple :radius 60 :hp 1 :speed 4 :bounce-gain 1.06
              :homing 0.18}})
 
-(defn ball
-  "Build a ball of the given kind. `dir` is the horizontal direction sign (±1)."
-  [kind x y dir]
+(def powerup-kinds
+  {:life      {:color "#ff5a8a" :glyph "♥"}
+   :multishot {:color "#7fd0ff" :glyph "✦"}})
+
+(defn ball [kind x y dir]
   (let [{:keys [palette radius hp speed bounce-gain homing]} (ball-kinds kind)]
     {:kind kind :palette palette
      :radius radius :hp hp :max-hp hp
@@ -54,6 +64,8 @@
   {:balls (starting-balls w)
    :player (fresh-player w h)
    :projectiles []
+   :powerups []
+   :buffs {}
    :aim nil
    :keys #{}
    :lives 3
@@ -133,6 +145,15 @@
                (>= y* (- proj-radius)) (<= y* (+ h proj-radius)))
       (assoc p :x x* :y y*))))
 
+(defn step-powerup [h {:keys [x y vy ttl] :as pu}]
+  (let [floor (- h powerup-size)
+        vy*  (+ vy powerup-gravity)
+        y*   (+ y vy*)
+        [y** vy**] (if (>= y* floor) [floor 0] [y* vy*])
+        ttl* (dec ttl)]
+    (when (pos? ttl*)
+      (assoc pu :y y** :vy vy** :ttl ttl* :x x))))
+
 (defn rect-circle-hit? [px py pw ph cx cy cr]
   (let [nx (-> cx (max px) (min (+ px pw)))
         ny (-> cy (max py) (min (+ py ph)))
@@ -140,15 +161,22 @@
         dy (- cy ny)]
     (<= (+ (* dx dx) (* dy dy)) (* cr cr))))
 
+(defn rect-rect-hit? [ax ay aw ah bx by bw bh]
+  (and (< ax (+ bx bw)) (> (+ ax aw) bx)
+       (< ay (+ by bh)) (> (+ ay ah) by)))
+
 (defn dist2 [ax ay bx by]
   (let [dx (- ax bx) dy (- ay by)]
     (+ (* dx dx) (* dy dy))))
 
+(defn spawn-powerup [x y]
+  (let [kind (rand-nth (vec (keys powerup-kinds)))]
+    {:kind kind :x (- x (/ powerup-size 2)) :y y :vy 0 :ttl powerup-ttl}))
+
 (defn resolve-projectiles
-  "Each projectile hits at most one ball. Armored balls survive until hp hits 0."
-  [{:keys [balls projectiles pops] :as s}]
-  (let [;; mark each projectile with the index of the first ball it touches
-        marked (mapv (fn [{:keys [x y] :as p}]
+  "Each projectile hits at most one ball. Balls dropping to 0 hp may drop a power-up."
+  [{:keys [balls projectiles pops powerups] :as s}]
+  (let [marked (mapv (fn [{:keys [x y] :as p}]
                        (let [idx (some (fn [[i b]]
                                          (when (<= (dist2 x y (:x b) (:y b))
                                                    (let [r (+ (:radius b) proj-radius)]
@@ -158,25 +186,51 @@
                          (assoc p :hit idx)))
                      projectiles)
         hit-counts (frequencies (keep :hit marked))
-        balls* (->> balls
+        killed (->> balls
                     (map-indexed
                       (fn [i b]
-                        (let [dmg (get hit-counts i 0)]
-                          (update b :hp - dmg))))
+                        (when (<= (- (:hp b) (get hit-counts i 0)) 0) b)))
+                    (keep identity))
+        balls* (->> balls
+                    (map-indexed (fn [i b] (update b :hp - (get hit-counts i 0))))
                     (remove #(<= (:hp %) 0))
                     vec)
-        pops-now (->> balls
-                      (map-indexed
-                        (fn [i b]
-                          (if (<= (- (:hp b) (get hit-counts i 0)) 0) 1 0)))
-                      (reduce +))
+        drops (->> killed
+                   (filter (fn [_] (< (rand) drop-rate)))
+                   (mapv #(spawn-powerup (:x %) (:y %))))
         projectiles* (->> marked
                           (remove :hit)
                           (mapv #(dissoc % :hit)))]
     (assoc s
            :balls balls*
            :projectiles projectiles*
-           :pops (+ pops pops-now))))
+           :pops (+ pops (count killed))
+           :powerups (into powerups drops))))
+
+(defn apply-powerup [s kind]
+  (case kind
+    :life (update s :lives #(min max-lives (inc %)))
+    :multishot (assoc-in s [:buffs :multishot] multishot-frames)))
+
+(defn collect-powerups [{:keys [player powerups] :as s}]
+  (let [{px :x py :y} player
+        [collected remaining]
+        (reduce (fn [[c r] {:keys [x y] :as pu}]
+                  (if (rect-rect-hit? px py player-w player-h
+                                      x y powerup-size powerup-size)
+                    [(conj c pu) r]
+                    [c (conj r pu)]))
+                [[] []]
+                powerups)]
+    (-> s
+        (assoc :powerups remaining)
+        (as-> s2 (reduce #(apply-powerup %1 (:kind %2)) s2 collected)))))
+
+(defn tick-buffs [{:keys [buffs] :as s}]
+  (assoc s :buffs (into {} (for [[k v] buffs
+                                 :let [v* (dec v)]
+                                 :when (pos? v*)]
+                             [k v*]))))
 
 (defn check-hit [{:keys [balls player lives phase] :as s}]
   (if (or (not= phase :playing) (pos? (:invuln player)))
@@ -198,20 +252,26 @@
     (assoc s :phase :win)
     s))
 
-(defn step [{:keys [balls player projectiles keys phase cooldown w h] :as s}]
+(defn step [{:keys [balls player projectiles powerups keys phase cooldown w h] :as s}]
   (let [balls* (mapv (partial step-ball w h player) balls)
         player* (step-player w h keys player)
         projectiles* (->> projectiles
                           (keep (partial step-projectile w h))
                           vec)
+        powerups* (->> powerups
+                       (keep (partial step-powerup h))
+                       vec)
         s* (assoc s
                   :balls balls*
                   :player player*
                   :projectiles projectiles*
+                  :powerups powerups*
                   :cooldown (max 0 (dec cooldown)))]
     (cond-> s*
       (= phase :playing) (update :score inc)
+      true tick-buffs
       true resolve-projectiles
+      (= phase :playing) collect-powerups
       true check-hit
       true check-win)))
 
@@ -282,6 +342,29 @@
     (.fill ctx))
   (set! (.-shadowBlur ctx) 0))
 
+(defn draw-powerups! [ctx powerups]
+  (doseq [{:keys [kind x y ttl]} powerups]
+    (let [{:keys [color glyph]} (powerup-kinds kind)
+          ;; pulse during last second
+          fading? (< ttl 60)
+          alpha (if fading? (/ (mod ttl 20) 20) 1)]
+      (set! (.-globalAlpha ctx) (max 0.3 alpha))
+      (set! (.-fillStyle ctx) color)
+      (set! (.-shadowColor ctx) color)
+      (set! (.-shadowBlur ctx) 14)
+      (.beginPath ctx)
+      (.roundRect ctx x y powerup-size powerup-size 6)
+      (.fill ctx)
+      (set! (.-shadowBlur ctx) 0)
+      (set! (.-fillStyle ctx) "#111")
+      (set! (.-font ctx) "bold 18px monospace")
+      (set! (.-textAlign ctx) "center")
+      (set! (.-textBaseline ctx) "middle")
+      (.fillText ctx glyph (+ x (/ powerup-size 2)) (+ y (/ powerup-size 2) 1))
+      (set! (.-textAlign ctx) "start")
+      (set! (.-textBaseline ctx) "alphabetic")
+      (set! (.-globalAlpha ctx) 1))))
+
 (defn aim-vector [{:keys [sx sy ex ey]}]
   (let [dx (- ex sx) dy (- ey sy)
         len (Math/sqrt (+ (* dx dx) (* dy dy)))]
@@ -311,13 +394,16 @@
         (.arc ctx ex ey 4 0 (* 2 Math/PI))
         (.fill ctx)))))
 
-(defn draw-hud! [ctx {:keys [lives pops score phase balls w h]}]
+(defn draw-hud! [ctx {:keys [lives pops score phase balls buffs w h]}]
   (set! (.-fillStyle ctx) "#fff")
   (set! (.-font ctx) "16px monospace")
   (.fillText ctx (str "LIVES " (apply str (repeat lives "♥"))) 16 28)
   (.fillText ctx (str "POPS  " pops) 16 50)
   (.fillText ctx (str "TIME  " (.toFixed (/ score 60) 1) "s") 16 72)
   (.fillText ctx (str "LEFT  " (count balls)) 16 94)
+  (when-let [ms (:multishot buffs)]
+    (set! (.-fillStyle ctx) (:color (powerup-kinds :multishot)))
+    (.fillText ctx (str "MULTISHOT " (.toFixed (/ ms 60) 1) "s") 16 120))
   (when (#{:game-over :win} phase)
     (set! (.-fillStyle ctx) "rgba(0,0,0,0.6)")
     (.fillRect ctx 0 0 w h)
@@ -332,13 +418,14 @@
     (.fillText ctx "click to play again" (/ w 2) (+ (/ h 2) 72))
     (set! (.-textAlign ctx) "start")))
 
-(defn render! [ctx {:keys [balls player projectiles] :as s}]
+(defn render! [ctx {:keys [balls player projectiles powerups] :as s}]
   (let [{:keys [w h]} s]
     (clear! ctx w h)
     (doseq [{:keys [trail palette radius]} balls]
       (draw-trail! ctx trail palette radius))
     (doseq [b balls]
       (draw-ball! ctx b))
+    (draw-powerups! ctx powerups)
     (draw-projectiles! ctx projectiles)
     (draw-player! ctx player)
     (draw-aim! ctx s)
@@ -363,16 +450,27 @@
   (when-let [k (key-map (.-code e))]
     (swap! state update :keys disj k)))
 
+(defn rotate [vx vy angle]
+  (let [c (Math/cos angle) s (Math/sin angle)]
+    [(- (* vx c) (* vy s))
+     (+ (* vx s) (* vy c))]))
+
 (defn fire! [s]
   (if-let [[vx vy _power] (and (:aim s) (aim-vector (:aim s)))]
-    (let [{:keys [player cooldown]} s]
+    (let [{:keys [player cooldown buffs]} s]
       (if (pos? cooldown)
         (assoc s :aim nil)
         (let [px (+ (:x player) (/ player-w 2))
-              py (+ (:y player) (/ player-h 2))]
+              py (+ (:y player) (/ player-h 2))
+              vels (if (:multishot buffs)
+                     [(rotate vx vy (- multishot-spread))
+                      [vx vy]
+                      (rotate vx vy multishot-spread)]
+                     [[vx vy]])
+              shots (mapv (fn [[vx vy]] {:x px :y py :vx vx :vy vy}) vels)]
           (-> s
               (assoc :aim nil :cooldown fire-cooldown)
-              (update :projectiles conj {:x px :y py :vx vx :vy vy})))))
+              (update :projectiles into shots)))))
     (assoc s :aim nil)))
 
 (defn on-mousedown [e]
