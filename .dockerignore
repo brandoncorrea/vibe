@@ -1,0 +1,26 @@
+# Keep the build context lean. node_modules and shadow-cljs caches are
+# regenerated inside the image; sending them just slows the COPY and
+# pollutes layers.
+**/node_modules
+**/.shadow-cljs
+**/.cpcache
+**/public/js
+**/.idea
+**/.vscode
+**/*.log
+
+# Repo metadata, not needed at build time
+.git
+.gitignore
+.beads
+.claude
+CLAUDE.md
+README.md
+**/README.md
+
+# Don't recursively bake the docker-compose config back into the context.
+# (nginx.conf is intentionally kept — the Dockerfile COPYs it into the runtime
+# stage. Dockerfile itself is not COPYd, so excluding it is just hygiene.)
+Dockerfile
+docker-compose.yml
+.dockerignore
