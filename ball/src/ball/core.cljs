@@ -1,8 +1,6 @@
 (ns ball.core)
 
-(def ^:const radius 72)
 (def ^:const gravity 0.6)
-(def ^:const energy-boost 1.08)
 (def ^:const wall-damping 0.92)
 (def ^:const max-trail 80)
 
@@ -20,21 +18,40 @@
 (def ^:const fire-cooldown 8)
 
 (def palettes
-  {:green {:trail "80, 220, 100"
-           :stops ["#c8ffc8" "#40c040" "#0a4a0a"]}
-   :blue  {:trail "100, 160, 255"
-           :stops ["#cfe0ff" "#4080ff" "#0a2a6a"]}})
+  {:green  {:trail "80, 220, 100"  :stops ["#c8ffc8" "#40c040" "#0a4a0a"]}
+   :blue   {:trail "100, 160, 255" :stops ["#cfe0ff" "#4080ff" "#0a2a6a"]}
+   :red    {:trail "255, 90, 90"   :stops ["#ffd0d0" "#ff3030" "#5a0a0a"]}
+   :grey   {:trail "180, 180, 180" :stops ["#f0f0f0" "#909090" "#202020"]}
+   :purple {:trail "200, 110, 255" :stops ["#ecc8ff" "#a040e0" "#3a0a4a"]}})
 
-(defn ball [x y vx vy palette]
-  {:x x :y y :vx vx :vy vy :trail '() :palette palette})
+(def ball-kinds
+  {:basic   {:palette :green  :radius 72 :hp 1 :speed 5 :bounce-gain 1.08}
+   :fast    {:palette :red    :radius 52 :hp 1 :speed 9 :bounce-gain 1.05}
+   :armored {:palette :grey   :radius 80 :hp 2 :speed 3 :bounce-gain 1.02}
+   :homing  {:palette :purple :radius 60 :hp 1 :speed 4 :bounce-gain 1.06
+             :homing 0.18}})
+
+(defn ball
+  "Build a ball of the given kind. `dir` is the horizontal direction sign (±1)."
+  [kind x y dir]
+  (let [{:keys [palette radius hp speed bounce-gain homing]} (ball-kinds kind)]
+    {:kind kind :palette palette
+     :radius radius :hp hp :max-hp hp
+     :bounce-gain bounce-gain :homing (or homing 0)
+     :x x :y y :vx (* dir speed) :vy 0 :trail '()}))
 
 (defn fresh-player [w h]
   {:x (/ w 2) :y (- h player-h) :vx 0 :vy 0
    :on-floor true :invuln 0 :facing 1})
 
+(defn starting-balls [w]
+  [(ball :basic   200       100  1)
+   (ball :fast    (- w 200) 200 -1)
+   (ball :armored (/ w 2)    80  1)
+   (ball :homing  (/ w 3)   260 -1)])
+
 (defn fresh-state [w h]
-  {:balls [(ball 200 100  5 0 :green)
-           (ball (- w 200) 200 -4 0 :blue)]
+  {:balls (starting-balls w)
    :player (fresh-player w h)
    :projectiles []
    :aim nil
@@ -55,22 +72,35 @@
     (set! (.-height canvas) h)
     (swap! state assoc :w w :h h)))
 
-(defn step-ball [w h {:keys [x y vx vy trail] :as b}]
-  (let [vy* (+ vy gravity)
-        x*  (+ x vx)
-        y*  (+ y vy*)
+(defn homing-accel [{bx :x by :y homing :homing} {px :x py :y}]
+  (if (zero? homing)
+    [0 0]
+    (let [pcx (+ px (/ player-w 2))
+          pcy (+ py (/ player-h 2))
+          dx (- pcx bx) dy (- pcy by)
+          len (Math/sqrt (+ (* dx dx) (* dy dy)))]
+      (if (< len 1)
+        [0 0]
+        [(* (/ dx len) homing) (* (/ dy len) homing)]))))
+
+(defn step-ball [w h player {:keys [x y vx vy trail radius bounce-gain] :as b}]
+  (let [[hx hy] (homing-accel b player)
+        vx0 (+ vx hx)
+        vy0 (+ vy hy gravity)
+        x*  (+ x vx0)
+        y*  (+ y vy0)
         floor (- h radius)
         ceil  radius
         right (- w radius)
         left  radius
         [x** vx**] (cond
-                     (> x* right) [right (* (- vx) wall-damping)]
-                     (< x* left)  [left  (* (- vx) wall-damping)]
-                     :else        [x* vx])
+                     (> x* right) [right (* (- vx0) wall-damping)]
+                     (< x* left)  [left  (* (- vx0) wall-damping)]
+                     :else        [x* vx0])
         [y** vy**] (cond
-                     (>= y* floor) [floor (* (- vy*) energy-boost)]
-                     (<= y* ceil)  [ceil  (* (- vy*) wall-damping)]
-                     :else         [y* vy*])
+                     (>= y* floor) [floor (* (- vy0) bounce-gain)]
+                     (<= y* ceil)  [ceil  (* (- vy0) wall-damping)]
+                     :else         [y* vy0])
         trail* (take max-trail (conj trail [x** y**]))]
     (assoc b :x x** :y y** :vx vx** :vy vy** :trail trail*)))
 
@@ -114,34 +144,46 @@
   (let [dx (- ax bx) dy (- ay by)]
     (+ (* dx dx) (* dy dy))))
 
-(defn resolve-projectiles [{:keys [balls projectiles pops] :as s}]
-  (let [hit-r2 (Math/pow (+ radius proj-radius) 2)
-        ;; mark each projectile with the index of the first ball it hits (or nil)
+(defn resolve-projectiles
+  "Each projectile hits at most one ball. Armored balls survive until hp hits 0."
+  [{:keys [balls projectiles pops] :as s}]
+  (let [;; mark each projectile with the index of the first ball it touches
         marked (mapv (fn [{:keys [x y] :as p}]
                        (let [idx (some (fn [[i b]]
-                                         (when (<= (dist2 x y (:x b) (:y b)) hit-r2) i))
+                                         (when (<= (dist2 x y (:x b) (:y b))
+                                                   (let [r (+ (:radius b) proj-radius)]
+                                                     (* r r)))
+                                           i))
                                        (map-indexed vector balls))]
                          (assoc p :hit idx)))
                      projectiles)
-        hit-set (into #{} (keep :hit marked))
+        hit-counts (frequencies (keep :hit marked))
         balls* (->> balls
-                    (map-indexed vector)
-                    (remove (comp hit-set first))
-                    (mapv second))
+                    (map-indexed
+                      (fn [i b]
+                        (let [dmg (get hit-counts i 0)]
+                          (update b :hp - dmg))))
+                    (remove #(<= (:hp %) 0))
+                    vec)
+        pops-now (->> balls
+                      (map-indexed
+                        (fn [i b]
+                          (if (<= (- (:hp b) (get hit-counts i 0)) 0) 1 0)))
+                      (reduce +))
         projectiles* (->> marked
                           (remove :hit)
                           (mapv #(dissoc % :hit)))]
     (assoc s
            :balls balls*
            :projectiles projectiles*
-           :pops (+ pops (count hit-set)))))
+           :pops (+ pops pops-now))))
 
 (defn check-hit [{:keys [balls player lives phase] :as s}]
   (if (or (not= phase :playing) (pos? (:invuln player)))
     s
     (let [{:keys [x y]} player
-          hit? (some (fn [{bx :x by :y}]
-                       (rect-circle-hit? x y player-w player-h bx by radius))
+          hit? (some (fn [{bx :x by :y br :radius}]
+                       (rect-circle-hit? x y player-w player-h bx by br))
                      balls)]
       (if hit?
         (let [lives* (dec lives)]
@@ -157,7 +199,7 @@
     s))
 
 (defn step [{:keys [balls player projectiles keys phase cooldown w h] :as s}]
-  (let [balls* (mapv (partial step-ball w h) balls)
+  (let [balls* (mapv (partial step-ball w h player) balls)
         player* (step-player w h keys player)
         projectiles* (->> projectiles
                           (keep (partial step-projectile w h))
@@ -177,7 +219,7 @@
   (set! (.-fillStyle ctx) "rgba(17, 17, 17, 0.25)")
   (.fillRect ctx 0 0 w h))
 
-(defn draw-trail! [ctx trail palette]
+(defn draw-trail! [ctx trail palette radius]
   (let [n (count trail)
         rgb (:trail (palettes palette))]
     (doseq [[i [tx ty]] (map-indexed vector trail)]
@@ -190,7 +232,7 @@
           (.arc ctx tx ty r 0 (* 2 Math/PI))
           (.fill ctx))))))
 
-(defn draw-ball! [ctx x y palette]
+(defn draw-ball! [ctx {:keys [x y palette radius hp max-hp]}]
   (let [[c0 c1 c2] (:stops (palettes palette))
         grad (.createRadialGradient ctx
                                     (- x (/ radius 3)) (- y (/ radius 3)) 2
@@ -201,7 +243,16 @@
     (set! (.-fillStyle ctx) grad)
     (.beginPath ctx)
     (.arc ctx x y radius 0 (* 2 Math/PI))
-    (.fill ctx)))
+    (.fill ctx)
+    (when (< hp max-hp)
+      (set! (.-strokeStyle ctx) "rgba(0,0,0,0.55)")
+      (set! (.-lineWidth ctx) 2)
+      (.beginPath ctx)
+      (.moveTo ctx (- x (* radius 0.8)) (- y (* radius 0.2)))
+      (.lineTo ctx (- x (* radius 0.1)) (+ y (* radius 0.1)))
+      (.lineTo ctx (+ x (* radius 0.4)) (- y (* radius 0.3)))
+      (.lineTo ctx (+ x (* radius 0.7)) (+ y (* radius 0.4)))
+      (.stroke ctx))))
 
 (defn draw-player! [ctx {:keys [x y invuln facing]}]
   (when (or (zero? invuln) (odd? (quot invuln 4)))
@@ -231,9 +282,7 @@
     (.fill ctx))
   (set! (.-shadowBlur ctx) 0))
 
-(defn aim-vector
-  "Returns [vx vy power 0..1] for an aim drag, or nil if too short."
-  [{:keys [sx sy ex ey]}]
+(defn aim-vector [{:keys [sx sy ex ey]}]
   (let [dx (- ex sx) dy (- ey sy)
         len (Math/sqrt (+ (* dx dx) (* dy dy)))]
     (when (>= len min-drag)
@@ -262,12 +311,13 @@
         (.arc ctx ex ey 4 0 (* 2 Math/PI))
         (.fill ctx)))))
 
-(defn draw-hud! [ctx {:keys [lives pops score phase w h]}]
+(defn draw-hud! [ctx {:keys [lives pops score phase balls w h]}]
   (set! (.-fillStyle ctx) "#fff")
   (set! (.-font ctx) "16px monospace")
   (.fillText ctx (str "LIVES " (apply str (repeat lives "♥"))) 16 28)
   (.fillText ctx (str "POPS  " pops) 16 50)
   (.fillText ctx (str "TIME  " (.toFixed (/ score 60) 1) "s") 16 72)
+  (.fillText ctx (str "LEFT  " (count balls)) 16 94)
   (when (#{:game-over :win} phase)
     (set! (.-fillStyle ctx) "rgba(0,0,0,0.6)")
     (.fillRect ctx 0 0 w h)
@@ -285,10 +335,10 @@
 (defn render! [ctx {:keys [balls player projectiles] :as s}]
   (let [{:keys [w h]} s]
     (clear! ctx w h)
-    (doseq [{:keys [trail palette]} balls]
-      (draw-trail! ctx trail palette))
-    (doseq [{:keys [x y palette]} balls]
-      (draw-ball! ctx x y palette))
+    (doseq [{:keys [trail palette radius]} balls]
+      (draw-trail! ctx trail palette radius))
+    (doseq [b balls]
+      (draw-ball! ctx b))
     (draw-projectiles! ctx projectiles)
     (draw-player! ctx player)
     (draw-aim! ctx s)
@@ -315,16 +365,14 @@
 
 (defn fire! [s]
   (if-let [[vx vy _power] (and (:aim s) (aim-vector (:aim s)))]
-    (let [{:keys [player cooldown projectiles]} s]
+    (let [{:keys [player cooldown]} s]
       (if (pos? cooldown)
         (assoc s :aim nil)
         (let [px (+ (:x player) (/ player-w 2))
               py (+ (:y player) (/ player-h 2))]
           (-> s
-              (assoc :aim nil
-                     :cooldown fire-cooldown)
-              (update :projectiles conj
-                      {:x px :y py :vx vx :vy vy})))))
+              (assoc :aim nil :cooldown fire-cooldown)
+              (update :projectiles conj {:x px :y py :vx vx :vy vy})))))
     (assoc s :aim nil)))
 
 (defn on-mousedown [e]
