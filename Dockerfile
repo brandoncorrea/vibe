@@ -1,9 +1,10 @@
-# syntax=docker/dockerfile:1.7
-#
 # Multi-stage build:
-#   1. node + JDK image runs `shadow-cljs release app` for ball, cube, landing
-#      and stages the outputs into landing/public/{ball,cube}/
+#   1. node + JDK image runs `shadow-cljs release app` for ball, cube, chart,
+#      bird, and landing, then stages each into landing/public/<name>/
 #   2. nginx:alpine serves the merged static tree
+#
+# No BuildKit-specific syntax — works with the classic builder too
+# (e.g. plain `docker-compose build` on a stock Arch install).
 
 # ---- Build -----------------------------------------------------------------
 FROM node:20-bookworm-slim AS build
@@ -21,8 +22,7 @@ COPY chart/package.json   chart/package-lock.json   chart/
 COPY bird/package.json    bird/package-lock.json    bird/
 COPY landing/package.json landing/package-lock.json landing/
 
-RUN --mount=type=cache,target=/root/.npm \
-    cd ball     && npm ci \
+RUN cd ball     && npm ci \
  && cd ../cube     && npm ci \
  && cd ../chart    && npm ci \
  && cd ../bird     && npm ci \
@@ -35,12 +35,10 @@ COPY chart/   chart/
 COPY bird/    bird/
 COPY landing/ landing/
 
-# Release builds. ~/.m2 cache mount avoids re-downloading Maven deps on rebuild.
-# Most projects name their build :app; chart names its build :chart so sibling
-# projects' :app builds can't collide when a shared shadow-cljs server is hit.
-RUN --mount=type=cache,target=/root/.m2 \
-    --mount=type=cache,target=/root/.gitlibs \
-    cd ball     && npx shadow-cljs release app \
+# Release builds. Most projects name their build :app; chart names its build
+# :chart so sibling projects' :app builds can't collide when a shared
+# shadow-cljs server is hit.
+RUN cd ball     && npx shadow-cljs release app \
  && cd ../cube     && npx shadow-cljs release app \
  && cd ../chart    && npx shadow-cljs release chart \
  && cd ../bird     && npx shadow-cljs release app \
