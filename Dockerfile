@@ -46,11 +46,22 @@ RUN cd ball     && npx shadow-cljs release app \
 
 # Merge each exercise's build under landing/public so the landing page's
 # relative ./<name>/ links resolve from a single static root.
+#
+# Each subproject's index.html references assets as absolute paths
+# (e.g. <script src="/js/main.js">) which only works when served from
+# the project's own root. After the merge, those absolute paths would
+# resolve to landing's bundle. Rewriting them to be relative (no
+# leading slash) makes the browser resolve `/chart/` -> `/chart/js/main.js`
+# correctly.
 RUN mkdir -p landing/public/ball landing/public/cube landing/public/chart landing/public/bird \
  && cp -r ball/public/.  landing/public/ball/ \
  && cp -r cube/public/.  landing/public/cube/ \
  && cp -r chart/public/. landing/public/chart/ \
- && cp -r bird/public/.  landing/public/bird/
+ && cp -r bird/public/.  landing/public/bird/ \
+ && for d in ball cube chart bird; do \
+        find landing/public/$d -maxdepth 2 -name '*.html' \
+            -exec sed -i -E 's#(href|src)="/#\1="#g' {} + ; \
+    done
 
 # ---- Runtime ---------------------------------------------------------------
 FROM nginx:1.27-alpine
