@@ -34,7 +34,16 @@
     :tags    ["reagent" "svg" "data"]
     :accent  "#a78bfa"
     :href    "./chart/"
-    :preview :chart}])
+    :preview :chart}
+
+   {:id      :bird
+    :title   "Flappy Bird"
+    :blurb   "A Flappy Bird clone on 2D canvas — gravity, flap input,
+              procedurally spawned pipes, collisions, and a score loop."
+    :tags    ["game" "canvas" "physics"]
+    :accent  "#fdca40"
+    :href    "./bird/"
+    :preview :bird}])
 
 ;; -----------------------------------------------------------------------------
 ;; DOM helpers
@@ -191,11 +200,57 @@
                 by     (+ pad-y (- usable-h bh))]
             (.fillRect ctx bx by bw bh)))))))
 
+(defn- bird-preview [^js canvas accent]
+  (let [state (atom {:y 40 :vy 0 :pipes [] :spawn 999})]
+    (fn [dt]
+      (let [ctx        (.getContext canvas "2d")
+            w          (.-clientWidth canvas)
+            h          (.-clientHeight canvas)
+            bird-x     (* w 0.28)
+            bird-r     6
+            gravity    340
+            flap-vy    -140
+            pipe-w     12
+            pipe-speed 55
+            gap-h      40
+            spawn-int  1.7]
+        (swap! state
+               (fn [{:keys [y vy pipes spawn]}]
+                 (let [vy'     (+ vy (* gravity dt))
+                       y'      (+ y (* vy' dt))
+                       ;; Bird "decides" to flap so the preview keeps running.
+                       [y' vy'] (cond
+                                  (> y' (- h 10)) [(- h 10) flap-vy]
+                                  (< y'   8)      [8 (* 0.5 (- flap-vy))]
+                                  :else           [y' vy'])
+                       spawn'  (+ spawn dt)
+                       [pipes' spawn']
+                       (if (> spawn' spawn-int)
+                         [(conj pipes {:x     (+ w pipe-w)
+                                       :gap-y (+ 18 (* (rand) (- h 36 gap-h)))})
+                          0]
+                         [pipes spawn'])
+                       pipes' (->> pipes'
+                                   (map #(update % :x - (* pipe-speed dt)))
+                                   (remove #(< (:x %) (- pipe-w)))
+                                   vec)]
+                   {:y y' :vy vy' :pipes pipes' :spawn spawn'})))
+        (.clearRect ctx 0 0 w h)
+        (set! (.-fillStyle ctx) "rgba(255,255,255,0.18)")
+        (doseq [{:keys [x gap-y]} (:pipes @state)]
+          (.fillRect ctx x 0          pipe-w (- gap-y (/ gap-h 2)))
+          (.fillRect ctx x (+ gap-y (/ gap-h 2)) pipe-w h))
+        (set! (.-fillStyle ctx) accent)
+        (.beginPath ctx)
+        (.arc ctx bird-x (:y @state) bird-r 0 (* 2 Math/PI))
+        (.fill ctx)))))
+
 (defn- make-preview [kind canvas accent]
   (case kind
     :ball  (ball-preview canvas accent)
     :cube  (cube-preview canvas accent)
-    :chart (chart-preview canvas accent)))
+    :chart (chart-preview canvas accent)
+    :bird  (bird-preview canvas accent)))
 
 ;; -----------------------------------------------------------------------------
 ;; Card construction
