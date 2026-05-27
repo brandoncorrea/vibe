@@ -1,0 +1,8 @@
+node_modules/
+.shadow-cljs/
+public/js/
+.cpcache/
+*.log
+.idea
+.clj-kondo
+.lsp

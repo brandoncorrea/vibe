@@ -1,0 +1,13 @@
+{
+  "name": "bird",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "watch": "shadow-cljs watch app",
+    "release": "shadow-cljs release app",
+    "serve": "shadow-cljs server"
+  },
+  "devDependencies": {
+    "shadow-cljs": "^2.28.18"
+  }
+}
