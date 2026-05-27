@@ -6,5 +6,5 @@ services:
     image: vibe-landing:latest
     container_name: vibe-landing
     ports:
-      - "8090:80"
+      - "8082:80"
     restart: unless-stopped

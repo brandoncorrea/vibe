@@ -1,8 +1,9 @@
 # landing
 
-ClojureScript landing page that lists the vibe-coded exercises (`ball`, `cube`)
-as cards with tiny animated previews — the bouncing ball card renders a real
-physics-step preview, and the cube card renders a live wireframe cube.
+ClojureScript landing page that lists the vibe-coded exercises (`ball`, `cube`,
+`chart`) as cards with tiny animated previews — the bouncing ball card renders
+a real physics-step preview, the cube card renders a live wireframe cube, and
+the chart card animates the real photographs-by-year dataset.
 
 ## Run (landing page only)
 
@@ -13,8 +14,8 @@ npx shadow-cljs watch app
 
 Open <http://localhost:8090>.
 
-The cards link to `./ball/` and `./cube/`. During landing-only dev those
-links 404 unless you also build the sibling exercises into `public/`.
+The cards link to `./ball/`, `./cube/`, and `./chart/`. During landing-only
+dev those links 404 unless you also build the sibling exercises into `public/`.
 
 ## Bundle everything for deploy
 
@@ -22,21 +23,23 @@ From the repo root:
 
 ```bash
 # Build each exercise as a release bundle
-(cd ball  && npm install && npx shadow-cljs release app)
-(cd cube  && npm install && npx shadow-cljs release app)
+(cd ball    && npm install && npx shadow-cljs release app)
+(cd cube    && npm install && npx shadow-cljs release app)
+(cd chart   && npm install && npx shadow-cljs release app)
 (cd landing && npm install && npx shadow-cljs release app)
 
 # Stage the exercises under landing/public/
-mkdir -p landing/public/ball landing/public/cube
+mkdir -p landing/public/ball landing/public/cube landing/public/chart
 cp -r ball/public/*  landing/public/ball/
 cp -r cube/public/*  landing/public/cube/
+cp -r chart/public/* landing/public/chart/
 
 # landing/public is now a fully self-contained static site
 ```
 
 Serve `landing/public/` with any static host (Netlify, GitHub Pages, `python3
--m http.server`, etc.). The cards' relative `./ball/` and `./cube/` hrefs will
-resolve to the staged bundles.
+-m http.server`, etc.). The cards' relative `./ball/`, `./cube/`, `./chart/`
+hrefs will resolve to the staged bundles.
 
 ## Adding a new exercise
 

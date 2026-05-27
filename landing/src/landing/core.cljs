@@ -25,7 +25,16 @@
     :tags    ["3d" "canvas" "math"]
     :accent  "#6ad6ff"
     :href    "./cube/"
-    :preview :cube}])
+    :preview :cube}
+
+   {:id      :chart
+    :title   "Photographs Chart"
+    :blurb   "A Reagent + SVG bar chart of estimated photographs taken
+              worldwide per 5-year period (1976–2025)."
+    :tags    ["reagent" "svg" "data"]
+    :accent  "#a78bfa"
+    :href    "./chart/"
+    :preview :chart}])
 
 ;; -----------------------------------------------------------------------------
 ;; DOM helpers
@@ -148,10 +157,45 @@
             (.lineTo ctx bx by)
             (.stroke ctx)))))))
 
+(def ^:private chart-values
+  ;; Real chart data — billions of photographs per 5-year period, 1976–2025.
+  [55 78 100 135 250 750 1500 3500 6500 8500])
+
+(def ^:private chart-max 8500)
+
+(defn- chart-preview [^js canvas accent]
+  (let [t          (atom 0)
+        cycle      4.0
+        bar-delay  0.08
+        bar-grow   0.5]
+    (fn [dt]
+      (swap! t #(mod (+ % dt) cycle))
+      (let [ctx      (.getContext canvas "2d")
+            w        (.-clientWidth canvas)
+            h        (.-clientHeight canvas)
+            pad-x    10
+            pad-y    10
+            gap      3
+            n        (count chart-values)
+            bw       (/ (- w (* 2 pad-x) (* gap (dec n))) n)
+            usable-h (- h (* 2 pad-y))]
+        (.clearRect ctx 0 0 w h)
+        (set! (.-fillStyle ctx) accent)
+        (doseq [[i v] (map-indexed vector chart-values)]
+          (let [norm   (/ v chart-max)
+                local  (max 0 (- @t (* i bar-delay)))
+                prog   (min 1 (/ local bar-grow))
+                eased  (- 1 (Math/pow (- 1 prog) 3))
+                bh     (max 1.5 (* norm usable-h eased))
+                bx     (+ pad-x (* i (+ bw gap)))
+                by     (+ pad-y (- usable-h bh))]
+            (.fillRect ctx bx by bw bh)))))))
+
 (defn- make-preview [kind canvas accent]
   (case kind
-    :ball (ball-preview canvas accent)
-    :cube (cube-preview canvas accent)))
+    :ball  (ball-preview canvas accent)
+    :cube  (cube-preview canvas accent)
+    :chart (chart-preview canvas accent)))
 
 ;; -----------------------------------------------------------------------------
 ;; Card construction
